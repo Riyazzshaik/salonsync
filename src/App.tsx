@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
+import { Toaster } from 'react-hot-toast';
 
 // Lazy loaded pages
 const LandingPage = lazy(() => import('./pages/LandingPage'));
@@ -14,6 +15,7 @@ const SalonDetails = lazy(() => import('./pages/SalonDetails'));
 const OwnerDashboard = lazy(() => import('./pages/OwnerDashboard'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const Profile = lazy(() => import('./pages/Profile'));
+const Settings = lazy(() => import('./pages/Settings'));
 const SalonRegistration = lazy(() => import('./pages/SalonRegistration'));
 
 // Loading Fallback
@@ -25,9 +27,11 @@ const PageLoader = () => (
   </div>
 );
 
+
 function App() {
   return (
     <AuthProvider>
+      <Toaster position="top-right" reverseOrder={false} />
       <Router>
         <div className="flex flex-col min-h-screen">
           <Navbar />
@@ -38,19 +42,21 @@ function App() {
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/signup" element={<Signup />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/salon/:id" element={<SalonDetails />} />
                 
                 {/* Protected Customer Routes */}
-                <Route path="/dashboard" element={
-                  <ProtectedRoute allowedRoles={['customer']}>
-                    <Dashboard />
-                  </ProtectedRoute>
-                } />
-                <Route path="/salon/:id" element={
-                  <ProtectedRoute allowedRoles={['customer']}>
-                    <SalonDetails />
-                  </ProtectedRoute>
-                } />
                 <Route path="/profile" element={
+                  <ProtectedRoute allowedRoles={['customer']}>
+                    <Profile />
+                  </ProtectedRoute>
+                } />
+                <Route path="/settings" element={
+                  <ProtectedRoute allowedRoles={['customer']}>
+                    <Settings />
+                  </ProtectedRoute>
+                } />
+                <Route path="/bookings" element={
                   <ProtectedRoute allowedRoles={['customer']}>
                     <Profile />
                   </ProtectedRoute>
@@ -62,7 +68,7 @@ function App() {
                     <OwnerDashboard />
                   </ProtectedRoute>
                 } />
-                <Route path="/owner/register" element={
+                <Route path="/owner/register-salon" element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <SalonRegistration />
                   </ProtectedRoute>

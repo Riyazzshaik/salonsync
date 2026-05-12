@@ -28,12 +28,22 @@ const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
+import { PageLoader } from '../components/ui/PageLoader';
+
 export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 5-second Safety Timeout to prevent blank screen on network/config issues
+    const safetyTimeout = setTimeout(() => {
+      if (loading) {
+        console.warn("Auth initialization timed out (10s). Proceeding to allow app render.");
+        setLoading(false);
+      }
+    }, 10000);
+
     const initAuth = async () => {
       try {
         await setPersistence(auth, browserLocalPersistence);
@@ -42,14 +52,17 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
       }
       
       const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        clearTimeout(safetyTimeout);
         setCurrentUser(user);
+        
         if (user) {
           try {
-            // Fetch user document
             const docRef = doc(db, 'users', user.uid);
             const docSnap = await getDoc(docRef);
             if (docSnap.exists()) {
               setUserData(docSnap.data() as User);
+            } else {
+              console.warn("Authenticated user has no Firestore profile. Uid:", user.uid);
             }
           } catch (e) {
             handleError("AuthContext.userData", e);
@@ -59,6 +72,7 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
         }
         setLoading(false);
       }, (error) => {
+        clearTimeout(safetyTimeout);
         handleError("AuthContext.stateChange", error);
         setLoading(false);
       });
@@ -69,13 +83,14 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
     const unsubscribePromise = initAuth();
     
     return () => {
+      clearTimeout(safetyTimeout);
       unsubscribePromise.then(unsub => unsub && unsub());
     };
   }, []);
 
   return (
     <AuthContext.Provider value={{ currentUser, userData, loading }}>
-      {!loading && children}
+      {loading ? <PageLoader /> : children}
     </AuthContext.Provider>
   );
 };

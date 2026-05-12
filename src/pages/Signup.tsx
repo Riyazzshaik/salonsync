@@ -2,16 +2,19 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
-import { Scissors, Mail, Lock, User as UserIcon } from 'lucide-react';
+import { Scissors, Mail, Lock, User as UserIcon, Phone } from 'lucide-react';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
+
+import { getRedirectPath } from '../utils/navigation';
 
 const Signup = () => {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
   const [role, setRole] = useState<'customer' | 'owner'>('customer');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -20,23 +23,42 @@ const Signup = () => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
-    
+    const trimmedEmail = email.trim();
+    const trimmedName = name.trim();
+
+    // Validate Phone (Indian format)
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(phone.replace(/\D/g, ''))) {
+      setError('Please enter a valid 10-digit Indian mobile number');
+      setIsLoading(false);
+      return;
+    }
+
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       const user = userCredential.user;
       
-      await updateProfile(user, { displayName: name });
+      await updateProfile(user, { displayName: trimmedName });
       
-      // Save to firestore
-      await setDoc(doc(db, 'users', user.uid), {
+      const userData = {
         uid: user.uid,
-        name,
-        email,
+        name: trimmedName,
+        email: trimmedEmail,
+        phoneNumber: phone.replace(/\s+/g, ''),
+        whatsappNumber: phone.replace(/\s+/g, ''), // Default to same
         role,
+        notificationPreferences: {
+          whatsapp: true,
+          email: true
+        },
         createdAt: new Date().toISOString()
-      });
+      };
 
-      navigate('/dashboard');
+      // Save to firestore
+      await setDoc(doc(db, 'users', user.uid), userData);
+
+      // For a fresh signup, owner won't have a salon yet
+      navigate(getRedirectPath(userData as any, null));
     } catch (err: any) {
       setError(err.message || 'Failed to create account');
     } finally {
@@ -114,6 +136,23 @@ const Signup = () => {
                   placeholder="Create a password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <Phone size={18} />
+                </div>
+                <input
+                  type="tel"
+                  required
+                  className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                  placeholder="10-digit mobile number"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
                 />
               </div>
             </div>

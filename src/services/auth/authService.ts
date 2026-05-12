@@ -44,5 +44,17 @@ export const AuthService = {
     } catch (error) {
       throw new Error(handleError("AuthService.getUsersCount", error));
     }
+  },
+
+  /**
+   * Fetches all registered users (Admin only)
+   */
+  getAllUsers: async (): Promise<User[]> => {
+    try {
+      const snapshot = await getDocs(collection(db, COLLECTIONS.USERS));
+      return snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id }) as User);
+    } catch (error) {
+      throw new Error(handleError("AuthService.getAllUsers", error));
+    }
   }
 };

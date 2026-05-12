@@ -42,7 +42,7 @@ const LandingPage = () => {
             </motion.p>
             
             <motion.div variants={itemVariants} className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-              <Link to="/salons">
+              <Link to="/dashboard">
                 <Button size="lg" className="w-full sm:w-auto gap-2 group text-base">
                   Find Salons
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />

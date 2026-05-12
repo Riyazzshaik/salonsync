@@ -2,56 +2,83 @@ import { AppConfig } from '../../config/appConfig';
 import { handleError } from '../../utils/errorHandler';
 
 /**
- * Webhook Service for N8N Automation Integrations
- * Triggers external workflows for WhatsApp, Email, and SMS notifications.
+ * WEBHOOK SERVICE (N8N READY)
+ * Modular architecture for triggering external automation workflows.
  */
 
+export type WebhookEvent = 
+  | 'booking_created' 
+  | 'booking_booked'
+  | 'booking_confirmed'
+  | 'booking_cancelled' 
+  | 'booking_checked_in' 
+  | 'booking_completed' 
+  | 'booking_no_show'
+  | 'booking_reminder'
+  | 'whatsapp_reminder'
+  | 'queue_alert_next'
+  | 'payment_success'
+  | 'user_notification';
+
 interface WebhookPayload {
-  [key: string]: any;
+  event: WebhookEvent;
+  bookingId?: string;
+  salonId?: string;
+  customerId?: string;
+  timestamp: string;
+  data?: any;
 }
 
 export const WebhookService = {
   /**
-   * Pings N8N when a booking is created or status changes.
+   * Universal trigger for all N8N workflows.
+   * Maps events to specific webhook URLs defined in environment.
    */
-  triggerBookingWebhook: async (payload: WebhookPayload): Promise<void> => {
-    if (!AppConfig.ENABLE_N8N_WEBHOOKS) return;
+  trigger: async (event: WebhookEvent, data: any): Promise<boolean> => {
+    if (!AppConfig.ENABLE_N8N_WEBHOOKS) return true; // Default to true if disabled
     
-    const url = import.meta.env.VITE_N8N_WEBHOOK_BOOKING;
-    if (!url) {
-      return;
+    // Choose appropriate webhook URL based on event category
+    let url = import.meta.env.VITE_N8N_WEBHOOK_URL; // Generic fallback
+    
+    if (event.startsWith('booking_')) {
+      url = import.meta.env.VITE_N8N_WEBHOOK_BOOKING || url;
+    } else if (event.startsWith('queue_')) {
+      url = import.meta.env.VITE_N8N_WEBHOOK_QUEUE || url;
     }
 
+    if (!url || url === 'YOUR_N8N_WEBHOOK_URL') {
+      console.warn(`WebhookService: No URL configured for event [${event}]. Skipping.`);
+      return false;
+    }
+
+    const payload: WebhookPayload = {
+      event,
+      timestamp: new Date().toISOString(),
+      data
+    };
+
     try {
-      await fetch(url, {
+      console.log(`Triggering Webhook [${event}]...`);
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      
+      return response.ok;
     } catch (error) {
-      handleError("WebhookService.triggerBookingWebhook", error);
+      handleError("WebhookService.trigger", error);
+      return false;
     }
   },
 
   /**
-   * Pings N8N when a queue alert needs to be sent (e.g. "Your turn is next!").
+   * Shorthand for booking-related triggers.
    */
-  triggerQueueWebhook: async (payload: WebhookPayload): Promise<void> => {
-    if (!AppConfig.ENABLE_N8N_WEBHOOKS) return;
-
-    const url = import.meta.env.VITE_N8N_WEBHOOK_QUEUE;
-    if (!url) {
-      return;
-    }
-
-    try {
-      await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-    } catch (error) {
-      handleError("WebhookService.triggerQueueWebhook", error);
-    }
+  triggerBookingWebhook: async (payload: { event: WebhookEvent; bookingId: string; data?: any }): Promise<boolean> => {
+    return await WebhookService.trigger(payload.event, { 
+      bookingId: payload.bookingId, 
+      ...payload.data 
+    });
   }
 };

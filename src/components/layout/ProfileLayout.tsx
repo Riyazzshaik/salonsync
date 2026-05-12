@@ -45,6 +45,7 @@ export const ProfileLayout: React.FC<ProfileLayoutProps> = ({ children, title, r
       { to: '/profile', icon: <User size={20} />, label: 'Profile' },
       { to: '/bookings', icon: <Calendar size={20} />, label: 'Bookings' },
       { to: '/favorites', icon: <Heart size={20} />, label: 'Favorites' },
+      { to: '/settings', icon: <Settings size={20} />, label: 'Settings' },
     ];
   };
 

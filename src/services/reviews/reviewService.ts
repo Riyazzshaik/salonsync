@@ -23,7 +23,7 @@ export const ReviewService = {
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({ ...doc.data(), reviewId: doc.id }));
     } catch (error) {
-      throw new Error(handleError("ReviewService.getSalonReviews", error));
+      throw new Error(handleError("ReviewService.getSalonReviews", error), { cause: error });
     }
   }
 };

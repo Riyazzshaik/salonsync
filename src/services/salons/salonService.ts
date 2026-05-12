@@ -1,9 +1,9 @@
-import { collection, doc, getDoc, getDocs, query, where, limit, updateDoc, increment, addDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where, limit, updateDoc, increment, addDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { COLLECTIONS } from '../../constants/collections';
 import { AppConfig } from '../../config/appConfig';
 import { handleError } from '../../utils/errorHandler';
-import type { Salon } from '../../types';
+import type { Salon, SalonServiceItem } from '../../types';
 
 /**
  * SALON SERVICE
@@ -34,7 +34,7 @@ export const SalonService = {
       
       return null;
     } catch (error) {
-      throw new Error(handleError("SalonService.getSalonById", error));
+      throw new Error(handleError("SalonService.getSalonById", error), { cause: error });
     }
   },
 
@@ -51,7 +51,7 @@ export const SalonService = {
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({ ...doc.data(), salonId: doc.id }) as Salon);
     } catch (error) {
-      throw new Error(handleError("SalonService.getActiveSalons", error));
+      throw new Error(handleError("SalonService.getActiveSalons", error), { cause: error });
     }
   },
 
@@ -68,7 +68,7 @@ export const SalonService = {
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({ ...doc.data(), salonId: doc.id }) as Salon);
     } catch (error) {
-      throw new Error(handleError("SalonService.getPendingSalons", error));
+      throw new Error(handleError("SalonService.getPendingSalons", error), { cause: error });
     }
   },
 
@@ -84,19 +84,19 @@ export const SalonService = {
       }
       return null;
     } catch (error) {
-      throw new Error(handleError("SalonService.getOwnerSalon", error));
+      throw new Error(handleError("SalonService.getOwnerSalon", error), { cause: error });
     }
   },
 
   /**
    * Registers a new salon
    */
-  registerSalon: async (salonData: any): Promise<string> => {
+  registerSalon: async (salonData: Partial<Salon>): Promise<string> => {
     try {
       const docRef = await addDoc(collection(db, COLLECTIONS.SALONS), salonData);
       return docRef.id;
     } catch (error) {
-      throw new Error(handleError("SalonService.registerSalon", error));
+      throw new Error(handleError("SalonService.registerSalon", error), { cause: error });
     }
   },
 
@@ -108,7 +108,7 @@ export const SalonService = {
       const salonRef = doc(db, COLLECTIONS.SALONS, salonId);
       await updateDoc(salonRef, { adminApproved: true });
     } catch (error) {
-      throw new Error(handleError("SalonService.approveSalon", error));
+      throw new Error(handleError("SalonService.approveSalon", error), { cause: error });
     }
   },
 
@@ -120,7 +120,7 @@ export const SalonService = {
       const salonRef = doc(db, COLLECTIONS.SALONS, salonId);
       await updateDoc(salonRef, { openStatus: isOpen });
     } catch (error) {
-      throw new Error(handleError("SalonService.updateSalonStatus", error));
+      throw new Error(handleError("SalonService.updateSalonStatus", error), { cause: error });
     }
   },
 
@@ -132,7 +132,7 @@ export const SalonService = {
       const salonRef = doc(db, COLLECTIONS.SALONS, salonId);
       await updateDoc(salonRef, { queueCapacity: capacity });
     } catch (error) {
-      throw new Error(handleError("SalonService.updateSalonCapacity", error));
+      throw new Error(handleError("SalonService.updateSalonCapacity", error), { cause: error });
     }
   },
 
@@ -144,7 +144,31 @@ export const SalonService = {
       const salonRef = doc(db, COLLECTIONS.SALONS, salonId);
       await updateDoc(salonRef, { queueLength: increment(1) });
     } catch (error) {
-      throw new Error(handleError("SalonService.joinQueue", error));
+      throw new Error(handleError("SalonService.joinQueue", error), { cause: error });
+    }
+  },
+
+  /**
+   * Updates the services offered by a salon.
+   */
+  updateSalonServices: async (salonId: string, services: SalonServiceItem[]): Promise<void> => {
+    try {
+      const salonRef = doc(db, COLLECTIONS.SALONS, salonId);
+      await updateDoc(salonRef, { services });
+    } catch (error) {
+      throw new Error(handleError("SalonService.updateSalonServices", error), { cause: error });
+    }
+  },
+
+  /**
+   * Updates general salon details (About, Timings, Features, etc.)
+   */
+  updateSalonDetails: async (salonId: string, details: Partial<Salon>): Promise<void> => {
+    try {
+      const salonRef = doc(db, COLLECTIONS.SALONS, salonId);
+      await updateDoc(salonRef, { ...details });
+    } catch (error) {
+      throw new Error(handleError("SalonService.updateSalonDetails", error), { cause: error });
     }
   },
 
@@ -156,7 +180,32 @@ export const SalonService = {
       const snapshot = await getDocs(collection(db, COLLECTIONS.SALONS));
       return snapshot.size;
     } catch (error) {
-      throw new Error(handleError("SalonService.getSalonsCount", error));
+      throw new Error(handleError("SalonService.getSalonsCount", error), { cause: error });
     }
+  },
+
+  /**
+   * Fetches all salons for Admin management.
+   */
+  getAllSalons: async (): Promise<Salon[]> => {
+    try {
+      const snapshot = await getDocs(collection(db, COLLECTIONS.SALONS));
+      return snapshot.docs.map(doc => ({ ...doc.data(), salonId: doc.id }) as Salon);
+    } catch (error) {
+      throw new Error(handleError("SalonService.getAllSalons", error), { cause: error });
+    }
+  },
+
+  /**
+   * Subscribes to pending salons (Admin only)
+   */
+  subscribeToPendingSalons: (onUpdate: (salons: Salon[]) => void) => {
+    const q = query(
+      collection(db, COLLECTIONS.SALONS),
+      where('adminApproved', '==', false)
+    );
+    return onSnapshot(q, (snapshot) => {
+      onUpdate(snapshot.docs.map(doc => ({ ...doc.data(), salonId: doc.id }) as Salon));
+    }, (err) => handleError("SalonService.subscribePending", err));
   }
 };

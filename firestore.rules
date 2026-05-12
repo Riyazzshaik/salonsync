@@ -1,121 +1,131 @@
 /**
- * FIRESTORE SECURITY RULES
- * Implements Role-Based Access Control (RBAC) and data integrity:
- * - Customers: Can manage their own bookings and view approved salons.
- * - Owners: Can manage their own salons, associated bookings, and live queues.
- * - Admins: Full system-wide override for verification and platform management.
+ * FIRESTORE SECURITY RULES - PRODUCTION HARDENED v1.0
+ * Implements Strict Role-Based Access Control (RBAC) and Schema Validation.
  */
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper Functions for Role & Auth Validation
+    // --- HELPER FUNCTIONS ---
+    
     function isAuthenticated() {
       return request.auth != null;
     }
     
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     function hasRole(role) {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+      return isAuthenticated() && getUserData().role == role;
     }
 
-    // USERS COLLECTION
+    function isOwnerOfSalon(salonId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/salons/$(salonId)).data.ownerId == request.auth.uid;
+    }
+
+    // --- COLLECTIONS ---
+
+    // USERS
     match /users/{userId} {
-      // Anyone logged in can read a user profile (needed for basic display), 
-      // but only the owner or an admin can write to it.
       allow read: if isAuthenticated();
-      allow create: if isOwner(userId) || hasRole('admin');
-      allow update, delete: if isOwner(userId) || hasRole('admin');
+      // Users can only update their own profile, and cannot change their own role.
+      allow update: if isAuthenticated() && (request.auth.uid == userId) && 
+                    (request.resource.data.role == resource.data.role || hasRole('admin'));
+      allow create: if isAuthenticated() && (request.auth.uid == userId);
+      allow delete: if hasRole('admin');
     }
 
-    // SALONS COLLECTION
+    // SALONS
     match /salons/{salonId} {
-      // Anyone can read salon data (to display on the dashboard and map)
       allow read: if true;
       
-      // Only admins or the specific salon owner can create/update
-      // We check if the incoming data's ownerId matches the requesting user
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || hasRole('admin'));
+      // Salon Creation: Authenticated users can create if they set themselves as owner.
+      // In production, you might restrict this to users with 'owner' role.
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
       
-      // Update allowed if user is the assigned owner, or an admin.
-      // Additionally, allow ANY authenticated user to safely increment the queue length (Join Queue feature)
-      // provided they are ONLY changing the queueLength field by 1.
+      // Salon Update: Only the owner or an admin can update.
+      // Exception: Anyone can increment queueLength (Join Queue feature).
       allow update: if 
-        (isAuthenticated() && resource.data.ownerId == request.auth.uid) || 
-        hasRole('admin') ||
+        hasRole('admin') || 
+        (isAuthenticated() && resource.data.ownerId == request.auth.uid) ||
         (
           isAuthenticated() &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['queueLength']) &&
           request.resource.data.queueLength == resource.data.queueLength + 1
         );
         
-      allow delete: if hasRole('admin') || (isAuthenticated() && resource.data.ownerId == request.auth.uid);
+      allow delete: if hasRole('admin');
     }
 
-    // BOOKINGS COLLECTION
+    // BOOKINGS
     match /bookings/{bookingId} {
-      // Users can only read their own bookings. Owners can read bookings for their salons. Admins can read all.
       allow read: if 
         hasRole('admin') || 
         (isAuthenticated() && resource.data.customerId == request.auth.uid) ||
-        (isAuthenticated() && get(/databases/$(database)/documents/salons/$(resource.data.salonId)).data.ownerId == request.auth.uid);
+        (isAuthenticated() && isOwnerOfSalon(resource.data.salonId));
 
-      // Customers can create bookings if they are the customerId.
-      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow create: if 
+        isAuthenticated() && 
+        request.resource.data.customerId == request.auth.uid &&
+        (
+          (request.resource.data.paymentStatus == 'partial_paid' && request.resource.data.razorpayPaymentId != "") ||
+          (request.resource.data.paymentStatus == 'success' && request.resource.data.razorpaySignature != "")
+        );
 
-      // Customers can cancel (update) their own bookings. Owners can update status (accept/reject).
       allow update: if 
         hasRole('admin') || 
-        (isAuthenticated() && resource.data.customerId == request.auth.uid) ||
-        (isAuthenticated() && get(/databases/$(database)/documents/salons/$(resource.data.salonId)).data.ownerId == request.auth.uid);
+        // Customers can ONLY cancel their own bookings or add UPI proof
+        (
+          isAuthenticated() && 
+          resource.data.customerId == request.auth.uid &&
+          (
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bookingStatus']) && request.resource.data.bookingStatus == 'cancelled') ||
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upiTransactionId', 'upiScreenshotUrl']))
+          )
+        ) ||
+        // Owners can update status AND verify payments
+        (
+          isAuthenticated() && 
+          isOwnerOfSalon(resource.data.salonId) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['customerId', 'advanceAmount'])
+        );
 
       allow delete: if hasRole('admin');
     }
+
+    // NOTIFICATION LOGS
+    match /notificationLogs/{logId} {
+      allow read: if hasRole('admin') || 
+                    (isAuthenticated() && resource.data.recipient == request.auth.uid);
+      allow create: if isAuthenticated(); // Allow system-triggered logs via frontend
+      allow update, delete: if hasRole('admin');
+    }
     
-    // REVIEWS COLLECTION
+    // REVIEWS
     match /reviews/{reviewId} {
       allow read: if true;
       allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
       allow update, delete: if hasRole('admin') || (isAuthenticated() && resource.data.authorId == request.auth.uid);
     }
 
-    // QUEUES COLLECTION
-    match /queues/{queueId} {
-      allow read: if isAuthenticated();
-      allow write: if hasRole('admin') || hasRole('owner');
-    }
-
-    // NOTIFICATIONS
-    match /notifications/{notifId} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow write: if hasRole('admin');
-    }
-
-    // ANALYTICS & ADMIN LOGS (Admin only)
-    match /analytics/{docId} {
-      allow read, write: if hasRole('admin');
-    }
-    
-    match /adminLogs/{docId} {
-      allow read: if hasRole('admin');
-      allow create: if isAuthenticated(); // Allow recording logs from any authenticated action
-      allow update, delete: if false; // Logs should be immutable
-    }
-
-    // FAVORITES
-    match /favorites/{favId} {
-      allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid;
-    }
-
-    // OWNER REQUESTS
+    // OWNER REQUESTS (Onboarding flow)
     match /ownerRequests/{reqId} {
       allow read: if hasRole('admin') || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated();
-      allow update: if hasRole('admin');
-      allow delete: if hasRole('admin');
+      allow update, delete: if hasRole('admin');
+    }
+
+    // ADMIN LOGS
+    match /adminLogs/{docId} {
+      allow read: if hasRole('admin');
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+    
+    // ANALYTICS
+    match /analytics/{docId} {
+      allow read, write: if hasRole('admin');
     }
   }
 }

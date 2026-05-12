@@ -8,7 +8,9 @@ import { ArrowLeft, Clock, MapPin, Users, Star, Map as MapIcon, CalendarX, Check
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/Button';
 import { BookingModal } from '../components/ui/BookingModal';
+import { BookingSuccessModal } from '../components/ui/BookingSuccessModal';
 import { MapRouteComponent } from '../components/ui/MapRouteComponent';
+import { PaymentService } from '../services/payments/paymentService';
 import { Skeleton } from '../components/ui/Skeleton';
 import { SalonService } from '../services/salons/salonService';
 import { BookingService } from '../services/bookings/bookingService';
@@ -33,20 +35,26 @@ const customIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
+import toast from 'react-hot-toast';
+
 const SalonDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { userData } = useAuth();
+  const { currentUser, userData } = useAuth();
   
   const [salon, setSalon] = useState<Salon | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isJoiningQueue, setIsJoiningQueue] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   
-  // Routing State
   const [routeInfo, setRouteInfo] = useState<{distance: number, duration: number} | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isMapLoading, setIsMapLoading] = useState(true);
+
+  // Booking Success State
+  const [lastBooking, setLastBooking] = useState<any>(null);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchSalon = async () => {
@@ -91,35 +99,124 @@ const SalonDetails = () => {
   }
 
   const handleJoinQueue = async () => {
-    if (!salon || !userData || isJoiningQueue) return;
+    if (!currentUser) {
+      toast.error('Please login to join the queue');
+      navigate('/login');
+      return;
+    }
+    if (!salon || isJoiningQueue) return;
     setIsJoiningQueue(true);
+    const loadingToast = toast.loading('Joining queue...');
     try {
       await SalonService.joinQueue(salon.salonId);
       setSalon(prev => prev ? { ...prev, queueLength: prev.queueLength + 1 } : null);
-      alert('Successfully joined the queue!');
+      toast.success('Successfully joined the queue!', { id: loadingToast });
     } catch (error) {
-      alert('Failed to join queue.');
+      toast.error('Failed to join queue.', { id: loadingToast });
     } finally {
       setIsJoiningQueue(false);
     }
   };
 
-  const handleConfirmBooking = async (serviceId: string, slotTime: string) => {
-    if (!salon || !userData) return;
+
+  const handleConfirmBooking = async (serviceId: string, slotTime: string, paymentMethod: 'razorpay' | 'upi_manual', upiData?: { transactionId: string, screenshotUrl?: string }) => {
+    if (!currentUser) {
+      toast.error('Please login to book an appointment');
+      navigate('/login');
+      return;
+    }
+    if (!salon || !userData || isProcessingPayment) return;
     
+    setIsProcessingPayment(true);
     try {
-      const service = salon.services?.find(s => s.id === serviceId) || { name: serviceId };
-      await BookingService.createBooking({
-        customerId: userData.uid,
-        salonId: salon.salonId,
-        service: service.name,
-        slotTime: slotTime,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
-      alert(`Successfully booked at ${slotTime}!`);
+      const service = salon.services?.find(s => s.id === serviceId);
+      if (!service) throw new Error("Service not found");
+
+      const advanceAmount = PaymentService.calculateAdvanceFee(service.price);
+
+      if (paymentMethod === 'razorpay') {
+        // Trigger Razorpay Payment
+        const paymentResult = await PaymentService.processAdvancePayment({
+          customerName: userData.name || 'Customer',
+          customerEmail: userData.email,
+          serviceName: service.name,
+          amount: advanceAmount,
+          salonName: salon.name
+        });
+
+        if (!paymentResult.success) {
+          console.log("Payment failed or cancelled:", paymentResult.error);
+          if (paymentResult.error === 'Payment cancelled by user') {
+            toast.error('Payment cancelled', { id: 'payment-error' });
+          } else {
+            toast.error(paymentResult.error || 'Payment failed', { id: 'payment-error' });
+          }
+          setIsProcessingPayment(false);
+          return;
+        }
+
+        const bookingData: any = {
+          customerId: userData.uid,
+          salonId: salon.salonId,
+          salonName: salon.name,
+          serviceName: service.name,
+          servicePrice: service.price,
+          duration: service.duration,
+          bookingDate: new Date().toLocaleDateString('en-GB'),
+          bookingTime: slotTime,
+          advanceAmount,
+          paymentMethod: 'razorpay',
+          status: 'confirmed',
+          bookingStatus: 'confirmed',
+          paymentStatus: 'success'
+        };
+
+        const booking = await BookingService.createBooking(bookingData, {
+          razorpay_payment_id: paymentResult.razorpay_payment_id || '',
+          razorpay_order_id: paymentResult.razorpay_order_id,
+          razorpay_signature: paymentResult.razorpay_signature
+        });
+        
+        if (booking) {
+          toast.success('Booking Confirmed & Payment Verified!', { id: 'booking-success' });
+          setLastBooking(booking);
+          setIsSuccessModalOpen(true);
+          setIsBookingModalOpen(false);
+        }
+      } else {
+        // Manual UPI Flow
+        const bookingData: any = {
+          customerId: userData.uid,
+          salonId: salon.salonId,
+          salonName: salon.name,
+          serviceName: service.name,
+          servicePrice: service.price,
+          duration: service.duration,
+          bookingDate: new Date().toLocaleDateString('en-GB'),
+          bookingTime: slotTime,
+          advanceAmount,
+          paymentMethod: 'upi_manual',
+          upiTransactionId: upiData?.transactionId,
+          upiScreenshotUrl: upiData?.screenshotUrl || '',
+          status: 'pending_payment',
+          bookingStatus: 'pending_payment',
+          paymentStatus: 'pending_verification'
+        };
+
+        const booking = await BookingService.createBooking(bookingData, { razorpay_payment_id: 'MANUAL_UPI' });
+
+        if (booking) {
+          toast.success('Payment Submitted for Verification!', { id: 'booking-success' });
+          setLastBooking(booking);
+          setIsSuccessModalOpen(true);
+          setIsBookingModalOpen(false);
+        }
+      }
     } catch (error) {
-      alert('Failed to book slot.');
+      handleError("SalonDetails.booking", error);
+      toast.error('Something went wrong. Please try again.', { id: 'payment-error' });
+    } finally {
+      setIsProcessingPayment(false);
     }
   };
 
@@ -394,6 +491,12 @@ const SalonDetails = () => {
         onClose={() => setIsBookingModalOpen(false)}
         salon={salon}
         onConfirmBooking={handleConfirmBooking}
+      />
+
+      <BookingSuccessModal 
+        isOpen={isSuccessModalOpen}
+        onClose={() => setIsSuccessModalOpen(false)}
+        booking={lastBooking}
       />
     </div>
   );

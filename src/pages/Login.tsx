@@ -6,6 +6,8 @@ import { Scissors, Mail, Lock } from 'lucide-react';
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
+import { SalonService } from '../services/salons/salonService';
+import { getRedirectPath } from '../utils/navigation';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -20,8 +22,20 @@ const Login = () => {
     setError('');
     
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      navigate('/dashboard');
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      // Fetch user data to get role
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (!userDoc.exists()) throw new Error("User record not found");
+      const userData = userDoc.data() as any;
+      
+      let salon = null;
+      if (userData.role === 'owner') {
+        salon = await SalonService.getOwnerSalon(user.uid);
+      }
+      
+      navigate(getRedirectPath(userData, salon));
     } catch (err: any) {
       if (err.code === 'auth/invalid-credential') {
         setError('Invalid email or password. Please try again.');
@@ -43,19 +57,28 @@ const Login = () => {
       const docRef = doc(db, 'users', user.uid);
       const docSnap = await getDoc(docRef);
       
+      let userData;
       if (!docSnap.exists()) {
         // Create new user doc for google sign in
-        await setDoc(docRef, {
+        userData = {
           uid: user.uid,
           name: user.displayName || 'User',
           email: user.email,
-          role: 'customer', // Default role for google sign-in
+          role: 'customer' as const, // Default role for google sign-in
           createdAt: new Date().toISOString(),
           profileImage: user.photoURL
-        });
+        };
+        await setDoc(docRef, userData);
+      } else {
+        userData = docSnap.data() as any;
       }
       
-      navigate('/dashboard');
+      let salon = null;
+      if (userData.role === 'owner') {
+        salon = await SalonService.getOwnerSalon(user.uid);
+      }
+      
+      navigate(getRedirectPath(userData, salon));
     } catch (err: any) {
       if (err.code === 'auth/popup-closed-by-user') {
         setError('Google sign-in was cancelled.');

@@ -13,7 +13,7 @@ const AMENITIES = ['AC Available', 'Parking', 'WiFi', 'Card Payment', 'UPI Payme
 const CATEGORIES = ['Hair Salon', 'Beauty Parlour', 'Nail Studio', 'Spa & Massage', 'Unisex Salon'];
 
 export default function SalonRegistration() {
-  const { userData } = useAuth();
+  const { currentUser } = useAuth();
   const navigate = useNavigate();
   
   const [currentStep, setCurrentStep] = useState<RegistrationStep>('basic');
@@ -88,16 +88,23 @@ export default function SalonRegistration() {
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userData) return;
+  const [showSuccess, setShowSuccess] = useState(false);
+
+  const handleSubmit = async (e?: React.BaseSyntheticEvent) => {
+    if (e) e.preventDefault();
+    
+    if (!currentUser) {
+      alert("Please log in to register your salon.");
+      navigate('/login');
+      return;
+    }
     
     setIsSubmitting(true);
     try {
       const galleryImages = [formData.gallery1, formData.gallery2].filter(img => img.trim() !== '');
       
       const salonPayload = {
-        ownerId: userData.uid,
+        ownerId: currentUser.uid,
         adminApproved: false,
         name: formData.name,
         description: formData.description,
@@ -105,8 +112,8 @@ export default function SalonRegistration() {
         address: formData.address,
         city: formData.city,
         state: formData.state,
-        latitude: Number(formData.latitude),
-        longitude: Number(formData.longitude),
+        latitude: Number(formData.latitude) || 0,
+        longitude: Number(formData.longitude) || 0,
         phone: formData.phone,
         whatsapp: formData.whatsapp,
         instagram: formData.instagram,
@@ -114,30 +121,32 @@ export default function SalonRegistration() {
         features: formData.features,
         openingHours: formData.openingHours,
         closingHours: formData.closingHours,
-        queueCapacity: Number(formData.queueCapacity),
+        queueCapacity: Number(formData.queueCapacity) || 10,
         logoImage: formData.logoImage || 'https://images.unsplash.com/photo-1580618672591-eb180b1a973f?w=150',
         bannerImage: formData.bannerImage || 'https://images.unsplash.com/photo-1580618672591-eb180b1a973f?w=1000',
         galleryImages: galleryImages,
         
-        // Default init values
         queueLength: 0,
         averageServiceTime: 20,
         estimatedWaitTime: 0,
         rating: 5.0,
         openStatus: false,
-        services: [], // Empty initially, added in dashboard later
-        images: [], // Deprecated
+        services: [],
+        images: [],
         image: formData.bannerImage || 'https://images.unsplash.com/photo-1580618672591-eb180b1a973f?w=1000',
         createdAt: new Date().toISOString()
       };
 
       await SalonService.registerSalon(salonPayload);
+      setShowSuccess(true);
       
-      alert("Registration submitted! Pending Admin Approval.");
-      navigate('/owner/dashboard');
+      // Auto-navigate after 2 seconds
+      setTimeout(() => {
+        navigate('/owner/dashboard');
+      }, 2000);
     } catch (error) {
       handleError("SalonRegistration.submit", error);
-      alert("Failed to submit registration.");
+      alert("Submission failed. Please check your internet connection.");
     } finally {
       setIsSubmitting(false);
     }
@@ -170,7 +179,23 @@ export default function SalonRegistration() {
           ))}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        {showSuccess ? (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center py-12"
+          >
+            <div className="h-20 w-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <CheckCircle size={40} />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Registration Successful!</h2>
+            <p className="text-gray-600 mb-6">Your salon is being added to our marketplace. Redirecting you to the dashboard...</p>
+            <div className="flex justify-center">
+              <Loader2 className="animate-spin text-primary" />
+            </div>
+          </motion.div>
+        ) : (
+          <div className="space-y-6">
           <AnimatePresence mode="wait">
             
             {currentStep === 'basic' && (
@@ -179,7 +204,7 @@ export default function SalonRegistration() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Salon Name *</label>
-                    <input required type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                    <input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -208,7 +233,7 @@ export default function SalonRegistration() {
                       <input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary outline-none" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})} />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-4 relative">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Latitude *</label>
                       <input required type="number" step="any" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. 12.9716" value={formData.latitude} onChange={e => setFormData({...formData, latitude: e.target.value})} />
@@ -217,6 +242,26 @@ export default function SalonRegistration() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Longitude *</label>
                       <input required type="number" step="any" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. 77.5946" value={formData.longitude} onChange={e => setFormData({...formData, longitude: e.target.value})} />
                     </div>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        if (navigator.geolocation) {
+                          navigator.geolocation.getCurrentPosition(
+                            (pos) => {
+                              setFormData(prev => ({
+                                ...prev,
+                                latitude: pos.coords.latitude.toString(),
+                                longitude: pos.coords.longitude.toString()
+                              }));
+                            },
+                            (_err) => alert("Failed to get location. Please enter manually.")
+                          );
+                        }
+                      }}
+                      className="absolute -right-2 -top-1 p-2 text-primary hover:text-accent transition-colors text-xs font-bold"
+                    >
+                      <MapPin size={14} className="inline mr-1" /> Auto-detect
+                    </button>
                   </div>
                   <Button type="button" onClick={() => handleNext('contact')} className="w-full py-4 mt-4">Continue <ArrowRight className="ml-2 w-4 h-4" /></Button>
                 </div>
@@ -317,11 +362,11 @@ export default function SalonRegistration() {
                   <div className="flex gap-4 mt-8">
                     <Button type="button" variant="outline" onClick={() => setCurrentStep('business')} className="w-1/3 py-4"><ArrowLeft className="mr-2 w-4 h-4" /> Back</Button>
                     <Button 
-                      type="submit" 
+                      onClick={handleSubmit}
                       className="w-2/3 py-4 bg-green-600 hover:bg-green-700 border-none text-white shadow-lg shadow-green-600/20"
-                      disabled={isSubmitting}
+                      isLoading={isSubmitting}
                     >
-                      {isSubmitting ? <Loader2 className="animate-spin w-5 h-5 mx-auto" /> : "Complete Registration"}
+                      Complete Registration
                     </Button>
                   </div>
                 </div>
@@ -329,8 +374,9 @@ export default function SalonRegistration() {
             )}
 
           </AnimatePresence>
-        </form>
+        </div>
+        )}
       </motion.div>
     </div>
   );
-}
+};
